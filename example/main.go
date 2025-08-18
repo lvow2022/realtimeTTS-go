@@ -234,6 +234,67 @@ func main() {
 
 	time.Sleep(1 * time.Second)
 
+	// 测试暂停和恢复
+	fmt.Println("   测试暂停和恢复功能...")
+
+	// 暂停播放
+	err = player.Pause()
+	if err != nil {
+		log.Fatalf("暂停播放失败: %v", err)
+	}
+	fmt.Printf("   播放状态: 已暂停\n")
+
+	// 暂停期间继续发送音频数据（应该被缓存）
+	fmt.Println("   暂停期间发送音频数据...")
+	for i := 0; i < 5; i++ {
+		audioData := audioDataList[i%len(audioDataList)]
+		soundName := soundNames[i%len(soundNames)]
+
+		chunk := realtimetts.AudioChunk{
+			Data:      audioData,
+			Timestamp: time.Now(),
+			Duration:  time.Duration(len(audioData)) * time.Second / time.Duration(config.GetBytesPerSecond()),
+		}
+		select {
+		case ttsChan <- []realtimetts.AudioChunk{chunk}:
+			fmt.Printf("   暂停期间发送音频块 %d (%s)\n", i+1, soundName)
+		default:
+			time.Sleep(50 * time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	time.Sleep(2 * time.Second) // 暂停2秒
+
+	// 恢复播放
+	err = player.Resume()
+	if err != nil {
+		log.Fatalf("恢复播放失败: %v", err)
+	}
+	fmt.Printf("   播放状态: 已恢复\n")
+
+	// 恢复后继续发送音频数据
+	fmt.Println("   恢复后继续发送音频数据...")
+	for i := 0; i < 10; i++ {
+		audioData := audioDataList[i%len(audioDataList)]
+		soundName := soundNames[i%len(soundNames)]
+
+		chunk := realtimetts.AudioChunk{
+			Data:      audioData,
+			Timestamp: time.Now(),
+			Duration:  time.Duration(len(audioData)) * time.Second / time.Duration(config.GetBytesPerSecond()),
+		}
+		select {
+		case ttsChan <- []realtimetts.AudioChunk{chunk}:
+			fmt.Printf("   恢复后发送音频块 %d (%s)\n", i+1, soundName)
+		default:
+			time.Sleep(50 * time.Millisecond)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	time.Sleep(2 * time.Second) // 等待恢复后的音频播放
+
 	// 10. 停止播放
 	fmt.Println("\n10. 停止播放...")
 	err = player.Stop()
