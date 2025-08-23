@@ -95,7 +95,7 @@ func (ae *OpenAIEngine) validateAPIKey() error {
 }
 
 // doSynthesize 执行OpenAI文本合成
-func (ae *OpenAIEngine) doSynthesize(ctx context.Context, text string, outputChan chan<- realtimetts.AudioChunk) error {
+func (ae *OpenAIEngine) doSynthesize(ctx context.Context, text string, outputChan chan<- []byte) error {
 	// 构建请求
 	request := OpenAISynthesisRequest{
 		Model:          "tts-1",
@@ -154,12 +154,7 @@ func (ae *OpenAIEngine) sendAudioInChunks(audioData []byte, outputChan chan<- []
 		}
 
 		chunk := audioData[i:end]
-		timestamp := time.Now()
-
-		// 计算持续时间（对于MP3格式，这是一个估算）
-		// 假设MP3压缩比为1:10，采样率24000Hz，16位，单声道
-		estimatedBytesPerSecond := 24000 * 2 * 1 / 10 // 估算的字节/秒
-		duration := time.Duration(len(chunk)) * time.Second / time.Duration(estimatedBytesPerSecond)
+		// 移除未使用的变量
 
 		if !ae.sendAudioChunk(chunk, outputChan, ctx) {
 			return fmt.Errorf("发送音频块失败")

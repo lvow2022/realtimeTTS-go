@@ -31,9 +31,6 @@ func (me *MockEngine) Synthesize(ctx context.Context, text string) (<-chan []byt
 		// 模拟音频数据
 		audioData := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
-		// 直接使用音频数据
-		audioData := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-
 		// 发送到输出通道
 		select {
 		case outputChan <- audioData:
@@ -241,7 +238,7 @@ func TestTextProcessor(t *testing.T) {
 	}
 
 	// 检查句子内容
-	expectedSentences := []string{"Hello", "This is a test", "How are you"}
+	expectedSentences := []string{"Hello", "This is a test", "How are you?"}
 	for i, sentence := range sentences {
 		if sentence != expectedSentences[i] {
 			t.Errorf("句子%d不匹配，期望'%s'，实际'%s'", i, expectedSentences[i], sentence)

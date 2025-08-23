@@ -41,7 +41,7 @@ func TestAudioConfiguration(t *testing.T) {
 // TestAudioBufferManager 测试音频缓冲管理器
 func TestAudioBufferManager(t *testing.T) {
 	config := DefaultAudioConfig()
-	ttsChan := make(chan []AudioChunk, 100)
+	ttsChan := make(chan [][]byte, 100)
 	bufferManager := NewAudioBufferManager(ttsChan, config, 100)
 
 	// 测试添加音频数据
@@ -117,7 +117,7 @@ func TestAudioStream(t *testing.T) {
 // TestStreamPlayer 测试流播放器
 func TestStreamPlayer(t *testing.T) {
 	config := DefaultAudioConfig()
-	ttsChan := make(chan []AudioChunk, 100)
+	ttsChan := make(chan [][]byte, 100)
 	player := NewStreamPlayer(ttsChan, config, 100)
 
 	// 测试播放器状态
@@ -164,7 +164,7 @@ func TestIntegration(t *testing.T) {
 	config := DefaultAudioConfig()
 
 	// 创建TTS音频通道
-	ttsChan := make(chan []AudioChunk, 1000)
+	ttsChan := make(chan [][]byte, 1000)
 
 	// 创建播放器
 	player := NewStreamPlayer(ttsChan, config, 1000)
@@ -191,13 +191,9 @@ func TestIntegration(t *testing.T) {
 
 	// 添加音频数据到TTS通道
 	for i := 0; i < 5; i++ {
-		chunk := AudioChunk{
-			Data:      testAudioData,
-			Timestamp: time.Now(),
-			Duration:  time.Duration(len(testAudioData)) * time.Second / time.Duration(config.GetBytesPerSecond()),
-		}
+		// 直接发送音频数据
 		select {
-		case ttsChan <- []AudioChunk{chunk}:
+		case ttsChan <- [][]byte{testAudioData}:
 			// 数据已发送到TTS通道
 		default:
 			t.Errorf("TTS通道已满")
@@ -216,7 +212,7 @@ func TestIntegration(t *testing.T) {
 // BenchmarkAudioBufferManager 性能测试
 func BenchmarkAudioBufferManager(b *testing.B) {
 	config := DefaultAudioConfig()
-	ttsChan := make(chan []AudioChunk, 1000)
+	ttsChan := make(chan [][]byte, 1000)
 	bufferManager := NewAudioBufferManager(ttsChan, config, 1000)
 
 	testData := make([]byte, 1024)

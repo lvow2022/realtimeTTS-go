@@ -22,7 +22,7 @@ type BaseEngine struct {
 	lastError    error
 
 	// 音频处理
-	audioChunks  chan realtimetts.AudioChunk
+	audioData    chan []byte
 	stopChan     chan struct{}
 	isProcessing bool
 
@@ -35,7 +35,7 @@ type BaseEngine struct {
 
 // Synthesizer 合成器接口
 type Synthesizer interface {
-	DoSynthesize(ctx context.Context, text string, outputChan chan<- realtimetts.AudioChunk) error
+	DoSynthesize(ctx context.Context, text string, outputChan chan<- []byte) error
 }
 
 // EngineStats 引擎统计信息
@@ -63,7 +63,7 @@ func NewBaseEngine(name, version, description string) *BaseEngine {
 		currentVoice: realtimetts.Voice{},
 		status:       realtimetts.EngineStatusUninitialized,
 		lastError:    nil,
-		audioChunks:  make(chan realtimetts.AudioChunk, 100),
+		audioData:    make(chan []byte, 100),
 		stopChan:     make(chan struct{}),
 		isProcessing: false,
 		stats: &EngineStats{
@@ -78,7 +78,7 @@ func NewBaseEngine(name, version, description string) *BaseEngine {
 }
 
 // Synthesize 基础合成方法（需要子类重写）
-func (be *BaseEngine) Synthesize(ctx context.Context, text string) (<-chan realtimetts.AudioChunk, error) {
+func (be *BaseEngine) Synthesize(ctx context.Context, text string) (<-chan []byte, error) {
 	be.mu.Lock()
 	defer be.mu.Unlock()
 
@@ -98,8 +98,8 @@ func (be *BaseEngine) Synthesize(ctx context.Context, text string) (<-chan realt
 	be.stats.LastSynthesisTime = time.Now()
 	be.stats.mu.Unlock()
 
-	// 创建新的音频块通道
-	outputChan := make(chan realtimetts.AudioChunk, 50)
+	// 创建新的音频数据通道
+	outputChan := make(chan []byte, 50)
 
 	// 启动合成协程
 	go be.synthesisWorker(ctx, text, outputChan)
@@ -108,7 +108,7 @@ func (be *BaseEngine) Synthesize(ctx context.Context, text string) (<-chan realt
 }
 
 // synthesisWorker 合成工作协程
-func (be *BaseEngine) synthesisWorker(ctx context.Context, text string, outputChan chan<- realtimetts.AudioChunk) {
+func (be *BaseEngine) synthesisWorker(ctx context.Context, text string, outputChan chan<- []byte) {
 	defer func() {
 		be.mu.Lock()
 		be.isProcessing = false
@@ -157,7 +157,7 @@ func (be *BaseEngine) synthesisWorker(ctx context.Context, text string, outputCh
 }
 
 // doSynthesize 具体的合成实现（需要子类重写）
-func (be *BaseEngine) doSynthesize(ctx context.Context, text string, outputChan chan<- realtimetts.AudioChunk) error {
+func (be *BaseEngine) doSynthesize(ctx context.Context, text string, outputChan chan<- []byte) error {
 	// 默认实现：返回错误，要求子类重写
 	return fmt.Errorf("doSynthesize方法需要子类实现")
 }
@@ -235,8 +235,8 @@ func (be *BaseEngine) Close() error {
 	close(be.stopChan)
 	be.status = realtimetts.EngineStatusClosed
 
-	// 关闭音频块通道
-	close(be.audioChunks)
+	// 关闭音频数据通道
+	close(be.audioData)
 
 	return nil
 }

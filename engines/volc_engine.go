@@ -131,7 +131,7 @@ func (ve *VolcengineEngine) doInitialize() error {
 }
 
 // DoSynthesize 执行火山云文本合成
-func (ve *VolcengineEngine) DoSynthesize(ctx context.Context, text string, outputChan chan<- realtimetts.AudioChunk) error {
+func (ve *VolcengineEngine) DoSynthesize(ctx context.Context, text string, outputChan chan<- []byte) error {
 	fmt.Printf("   开始火山云合成: %s\n", text)
 
 	// 构建请求参数
@@ -291,7 +291,7 @@ func (ve *VolcengineEngine) sendAudioInChunks(audioData []byte, outputChan chan<
 		}
 
 		chunk := audioData[i:end]
-		timestamp := time.Now()
+		// 移除未使用的变量 timestamp
 
 		// 计算持续时间
 		bytesPerSecond := ve.config.Rate * ve.config.Channels * (ve.config.BitDepth / 8)

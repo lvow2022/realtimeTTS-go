@@ -129,7 +129,7 @@ func (ae *AzureEngine) validateConnection() error {
 }
 
 // doSynthesize 执行Azure文本合成
-func (ae *AzureEngine) doSynthesize(ctx context.Context, text string, outputChan chan<- realtimetts.AudioChunk) error {
+func (ae *AzureEngine) doSynthesize(ctx context.Context, text string, outputChan chan<- []byte) error {
 	// 构建SSML
 	ssml := ae.buildSSML(text)
 
@@ -248,10 +248,7 @@ func (ae *AzureEngine) sendAudioInChunks(audioData []byte, outputChan chan<- []b
 		}
 
 		chunk := audioData[i:end]
-		timestamp := time.Now()
-		bytesPerFrame := ae.config.Channels * (ae.config.BitsPerSample / 8)
-		bytesPerSecond := ae.config.SampleRate * bytesPerFrame
-		duration := time.Duration(len(chunk)) * time.Second / time.Duration(bytesPerSecond)
+		// 移除未使用的变量
 
 		if !ae.sendAudioChunk(chunk, outputChan, ctx) {
 			return fmt.Errorf("发送音频块失败")
