@@ -54,7 +54,7 @@ type PlaybackStats struct {
 }
 
 // NewStreamPlayer 创建新的流播放器
-func NewStreamPlayer(ttsAudioChan chan []AudioChunk, config *AudioConfiguration, bufferSize int) *StreamPlayer {
+func NewStreamPlayer(ttsAudioChan chan [][]byte, config *AudioConfiguration, bufferSize int) *StreamPlayer {
 	bufferManager := NewAudioBufferManager(ttsAudioChan, config, bufferSize)
 	audioStream := NewAudioStream(config)
 
@@ -298,6 +298,60 @@ func (sp *StreamPlayer) GetStats() PlaybackStats {
 	}
 }
 
+// WaitForPlaybackComplete 等待播放完成
+func (sp *StreamPlayer) WaitForPlaybackComplete(timeout time.Duration) error {
+	fmt.Printf("   ⏳ 等待播放完成，超时时间: %v\n", timeout)
+
+	startTime := time.Now()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastActivityTime time.Time
+	var totalBytesPlayed int64
+	noActivityStartTime := time.Time{}
+
+	for {
+		select {
+		case <-ticker.C:
+			// 检查是否还有音频数据在缓冲区中
+			sp.stats.mu.RLock()
+			currentLastActivity := sp.stats.LastActivityTime
+			currentBytesPlayed := sp.stats.BytesPlayed
+			sp.stats.mu.RUnlock()
+
+			// 如果有新的音频活动，重置无活动开始时间
+			if currentLastActivity.After(lastActivityTime) {
+				lastActivityTime = currentLastActivity
+				totalBytesPlayed = currentBytesPlayed
+				noActivityStartTime = time.Time{} // 重置
+				fmt.Printf("   📊 播放进度: %d 字节\n", currentBytesPlayed)
+			} else if noActivityStartTime.IsZero() {
+				// 开始记录无活动时间
+				noActivityStartTime = time.Now()
+				fmt.Printf("   ⏸️  检测到音频活动停止，开始等待PortAudio缓冲区播放完成...\n")
+			}
+
+			// 如果没有活动超过3秒，认为播放完成
+			// 3秒足够PortAudio播放完缓冲区中的数据
+			if !noActivityStartTime.IsZero() && time.Since(noActivityStartTime) > 3*time.Second {
+				fmt.Printf("   ✅ 播放完成！总播放字节数: %d\n", totalBytesPlayed)
+
+				// 额外等待1秒确保PortAudio内部缓冲区播放完成
+				fmt.Printf("   ⏳ 额外等待1秒确保PortAudio缓冲区播放完成...\n")
+				time.Sleep(1 * time.Second)
+				fmt.Printf("   🎵 PortAudio缓冲区播放完成！\n")
+				return nil
+			}
+
+			// 检查超时
+			if time.Since(startTime) > timeout {
+				fmt.Printf("   ⚠️  等待播放完成超时\n")
+				return fmt.Errorf("等待播放完成超时")
+			}
+		}
+	}
+}
+
 // SetCallbacks 设置回调函数
 func (sp *StreamPlayer) SetCallbacks(
 	onAudioChunk func([]byte),
@@ -320,31 +374,48 @@ func (sp *StreamPlayer) SetCallbacks(
 
 // playbackWorker 播放工作协程
 func (sp *StreamPlayer) playbackWorker() {
-	ticker := time.NewTicker(10 * time.Millisecond) // 10ms 检查间隔
+	ticker := time.NewTicker(5 * time.Millisecond) // 5ms 检查间隔，提高响应性
 	defer ticker.Stop()
+
+	fmt.Println("   🔄 playbackWorker 启动")
+	loopCount := 0
 
 	for {
 		select {
 		case <-sp.immediateStop:
+			fmt.Println("   🛑 playbackWorker 收到停止信号")
 			return
 
 		case <-sp.pauseEvent:
+			fmt.Println("   ⏸️  playbackWorker 收到暂停信号")
 			// 等待恢复信号
 			select {
 			case <-sp.resumeEvent:
+				fmt.Println("   ▶️  playbackWorker 收到恢复信号")
 				continue
 			case <-sp.immediateStop:
+				fmt.Println("   🛑 playbackWorker 暂停时收到停止信号")
 				return
 			}
 
 		case <-ticker.C:
+			loopCount++
+			// 每100次循环（约1秒）打印一次状态
+			if loopCount%100 == 0 {
+				fmt.Printf("   🔄 playbackWorker 运行中... (循环次数: %d)\n", loopCount)
+			}
+
 			// 处理音频数据
 			if err := sp.processAudioChunk(); err != nil {
 				// 如果缓冲区为空，继续等待
 				if err == ErrBufferTimeout {
+					if loopCount%100 == 0 { // 减少日志频率
+						fmt.Printf("   ⏳ 缓冲区超时，继续等待... (循环次数: %d)\n", loopCount)
+					}
 					continue
 				}
 				// 其他错误，停止播放
+				fmt.Printf("   ❌ 处理音频块错误: %v，停止播放\n", err)
 				sp.Stop()
 				return
 			}
@@ -358,10 +429,13 @@ func (sp *StreamPlayer) playbackWorker() {
 // processAudioChunk 处理音频块
 func (sp *StreamPlayer) processAudioChunk() error {
 	// 从缓冲区获取音频数据
-	audioData, err := sp.bufferManager.GetFromBuffer(50 * time.Millisecond)
+	audioData, err := sp.bufferManager.GetFromBuffer(200 * time.Millisecond)
 	if err != nil {
 		return err
 	}
+
+	// 调试信息：显示获取到的音频数据大小
+	fmt.Printf("   📥 从缓冲区获取音频数据: %d 字节\n", len(audioData))
 
 	// 写入音频流
 	if err := sp.audioStream.WriteAudioData(audioData); err != nil {

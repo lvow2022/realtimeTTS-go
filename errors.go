@@ -41,4 +41,5 @@ var (
 	ErrEngineNotInitialized  = errors.New("TTS引擎未初始化")
 	ErrEngineSynthesisFailed = errors.New("TTS引擎合成失败")
 	ErrNoEnginesAvailable    = errors.New("没有可用的TTS引擎")
+	ErrInvalidPitch          = errors.New("无效的音调值")
 )

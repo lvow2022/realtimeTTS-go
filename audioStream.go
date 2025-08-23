@@ -91,6 +91,7 @@ func (as *AudioStream) OpenStream() error {
 
 	// 选择最佳采样率
 	as.actualSampleRate = as.selectBestSampleRate(defaultDevice, as.config.SampleRate)
+	fmt.Printf("   实际使用采样率: %d Hz\n", as.actualSampleRate)
 
 	// 创建音频流参数
 	streamParams := portaudio.StreamParameters{
@@ -118,10 +119,42 @@ func (as *AudioStream) OpenStream() error {
 
 // selectBestSampleRate 选择最佳采样率
 func (as *AudioStream) selectBestSampleRate(device *portaudio.DeviceInfo, desiredRate int) int {
-	if device.DefaultSampleRate == float64(desiredRate) {
-		return desiredRate
+	// 优先使用指定的采样率
+	fmt.Printf("   设备默认采样率: %.0f Hz\n", device.DefaultSampleRate)
+	fmt.Printf("   期望采样率: %d Hz\n", desiredRate)
+
+	// 检查设备是否支持指定采样率
+	// 这里我们假设设备支持常见的采样率
+	supportedRates := []int{8000, 11025, 16000, 22050, 44100, 48000}
+	for _, rate := range supportedRates {
+		if rate == desiredRate {
+			fmt.Printf("   使用指定采样率: %d Hz\n", desiredRate)
+			return desiredRate
+		}
 	}
-	return int(device.DefaultSampleRate)
+
+	// 如果设备不支持指定采样率，使用最接近的采样率
+	closestRate := int(device.DefaultSampleRate)
+	minDiff := abs(int(device.DefaultSampleRate) - desiredRate)
+
+	for _, rate := range supportedRates {
+		diff := abs(rate - desiredRate)
+		if diff < minDiff {
+			minDiff = diff
+			closestRate = rate
+		}
+	}
+
+	fmt.Printf("   指定采样率不支持，使用最接近的采样率: %d Hz\n", closestRate)
+	return closestRate
+}
+
+// abs 返回整数的绝对值
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // audioCallback PortAudio 音频回调函数
@@ -246,13 +279,20 @@ func (as *AudioStream) WriteAudioData(data []byte) error {
 	// 将字节数据转换为float32格式
 	audioData := as.convertBytesToFloat32(data)
 
-	// 将音频数据放入缓冲区
+	// 将音频数据放入缓冲区，如果缓冲区满了就等待
 	select {
 	case as.audioBuffer <- audioData:
 		return nil
 	default:
-		// 缓冲区满了，丢弃数据
-		return ErrBufferFull
+		// 缓冲区满了，等待一段时间再尝试
+		fmt.Printf("   ⏳ 音频缓冲区满了，等待空间...\n")
+		select {
+		case as.audioBuffer <- audioData:
+			return nil
+		case <-time.After(100 * time.Millisecond): // 等待100ms
+			fmt.Printf("   ⚠️  音频缓冲区等待超时，丢弃数据\n")
+			return ErrBufferFull
+		}
 	}
 }
 

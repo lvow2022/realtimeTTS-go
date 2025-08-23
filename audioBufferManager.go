@@ -1,24 +1,18 @@
 package realtimetts
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
-
-// AudioChunk 音频块结构体
-type AudioChunk struct {
-	Data      []byte        // 音频数据
-	Timestamp time.Time     // 时间戳
-	Duration  time.Duration // 持续时间
-}
 
 // AudioBufferManager 音频缓冲管理器
 // 从 tts chan 接收音频流
 // 提供add_to_buffer/clear_buffer/get_form_buffer/get_buffered_seconds
 type AudioBufferManager struct {
-	ttsAudioChan chan []AudioChunk // TTS音频输入通道
-	audioBuffer  chan []byte       // 音频数据缓冲区
-	timings      chan TimingInfo   // 时间信息缓冲区
+	ttsAudioChan chan [][]byte   // TTS音频输入通道
+	audioBuffer  chan []byte     // 音频数据缓冲区
+	timings      chan TimingInfo // 时间信息缓冲区
 	config       *AudioConfiguration
 
 	// 状态管理
@@ -41,7 +35,7 @@ type TimingInfo struct {
 }
 
 // NewAudioBufferManager 创建新的音频缓冲管理器
-func NewAudioBufferManager(ttsAudioChan chan []AudioChunk, config *AudioConfiguration, bufferSize int) *AudioBufferManager {
+func NewAudioBufferManager(ttsAudioChan chan [][]byte, config *AudioConfiguration, bufferSize int) *AudioBufferManager {
 	return &AudioBufferManager{
 		ttsAudioChan:    ttsAudioChan,
 		audioBuffer:     make(chan []byte, bufferSize),
@@ -225,10 +219,14 @@ func (abm *AudioBufferManager) Start() {
 
 // processTTSAudio 处理TTS音频数据的协程
 func (abm *AudioBufferManager) processTTSAudio() {
+	fmt.Println("   🔄 AudioBufferManager.processTTSAudio 启动")
+	chunkCount := 0
+
 	for {
 		abm.mu.RLock()
 		if abm.isClosed {
 			abm.mu.RUnlock()
+			fmt.Println("   🛑 AudioBufferManager.processTTSAudio 已关闭")
 			return
 		}
 		abm.mu.RUnlock()
@@ -237,14 +235,19 @@ func (abm *AudioBufferManager) processTTSAudio() {
 		case audioChunks, ok := <-abm.ttsAudioChan:
 			if !ok {
 				// TTS通道已关闭
+				fmt.Println("   🛑 TTS通道已关闭，processTTSAudio 退出")
 				return
 			}
 
 			// 处理每个音频块
-			for _, chunk := range audioChunks {
-				// 将音频块数据添加到内部缓冲区
-				if err := abm.AddToBuffer(chunk.Data); err != nil {
+			for _, audioData := range audioChunks {
+				chunkCount++
+				fmt.Printf("   📦 处理音频块 %d: %d 字节\n", chunkCount, len(audioData))
+
+				// 将音频数据添加到内部缓冲区
+				if err := abm.AddToBuffer(audioData); err != nil {
 					// 如果缓冲区满了，可以选择丢弃数据或等待
+					fmt.Printf("   ⚠️  添加音频块到缓冲区失败: %v\n", err)
 					continue
 				}
 			}
