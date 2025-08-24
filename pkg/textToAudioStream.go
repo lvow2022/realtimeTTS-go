@@ -16,7 +16,6 @@ type TextToAudioStream struct {
 	// 引擎管理
 	engines       []TTSEngine
 	currentEngine int
-	engineFactory *EngineFactory
 
 	// 播放控制
 	player       *StreamPlayer
@@ -75,7 +74,7 @@ func NewTextToAudioStream(engines []TTSEngine, config *StreamConfig) *TextToAudi
 	}
 
 	// 创建统一的音频缓冲管理器
-	audioBuffer := NewAudioBuffer(make(chan [][]byte, 1000), config.AudioConfig, 1000)
+	audioBuffer := NewAudioBuffer(config.AudioConfig, 1000)
 
 	// 启动音频缓冲管理器
 	audioBuffer.Start()
@@ -98,7 +97,6 @@ func NewTextToAudioStream(engines []TTSEngine, config *StreamConfig) *TextToAudi
 	stream := &TextToAudioStream{
 		engines:       engines,
 		currentEngine: 0,
-		engineFactory: NewEngineFactory(),
 		player:        player,
 		playLock:      sync.Mutex{},
 		ttsAudioChan:  make(chan [][]byte, 1000),

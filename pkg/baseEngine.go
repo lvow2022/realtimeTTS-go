@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"realtimetts"
 )
 
 // Voice 语音结构体
@@ -96,7 +94,7 @@ type BaseEngine struct {
 	engineName           string
 	canConsumeGenerators bool
 
-	audioBuffer *realtimetts.AudioBuffer
+	audioBuffer *AudioBuffer
 
 	// 回调函数
 	onAudioChunk    func([]byte)
@@ -144,8 +142,8 @@ func ValidateEngineConfig(config *EngineConfig) error {
 // 工具方法
 
 // GetDefaultStreamInfo 获取默认音频配置信息
-func (be *BaseEngine) GetDefaultStreamInfo() *realtimetts.AudioConfiguration {
-	return &realtimetts.AudioConfiguration{
+func (be *BaseEngine) GetDefaultStreamInfo() *AudioConfiguration {
+	return &AudioConfiguration{
 		SampleRate:    16000,
 		Channels:      1,
 		BitsPerSample: 16,
@@ -183,6 +181,13 @@ func (be *BaseEngine) SetOnAudioChunk(callback func([]byte)) {
 // SetOnPlaybackStart 设置播放开始回调
 func (be *BaseEngine) SetOnPlaybackStart(callback func()) {
 	be.onPlaybackStart = callback
+}
+
+// SetAudioBuffer 设置音频缓冲管理器
+func (be *BaseEngine) SetAudioBuffer(audioBuffer *AudioBuffer) {
+	be.mu.Lock()
+	defer be.mu.Unlock()
+	be.audioBuffer = audioBuffer
 }
 
 // StopSynthesis 停止合成

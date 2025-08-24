@@ -1,19 +1,34 @@
-package main
+package engines_test
 
 import (
+	"context"
 	"fmt"
-	"log"
+	"testing"
 	"time"
 
-	"realtimetts"
 	"realtimetts/engines"
+	realtimetts "realtimetts/pkg"
 )
 
-func main() {
-	fmt.Println("🎵 火山云TTS引擎示例程序")
+func TestVolcengineEngine(t *testing.T) {
+	fmt.Println("🎵 火山云TTS引擎测试程序")
 	fmt.Println("================================")
 
-	// 1. 创建火山云TTS引擎
+	// 创建测试引擎
+	volcEngine := createTestVolcengineEngine(t)
+	if volcEngine == nil {
+		t.Fatal("创建火山云引擎失败")
+	}
+
+	// 运行测试
+	testVolcengineEngineBasic(t, volcEngine)
+	testVolcengineEngineSynthesis(t, volcEngine)
+}
+
+// createTestVolcengineEngine 创建测试用的火山云引擎
+func createTestVolcengineEngine(t *testing.T) *engines.VolcengineEngine {
+	t.Helper()
+	
 	fmt.Println("\n1. 创建火山云TTS引擎...")
 	volcEngine := engines.NewVolcengineEngine(
 		"1882614830",                       // AppID
@@ -42,23 +57,30 @@ func main() {
 	}
 
 	if err := volcEngine.SetVolcengineConfig(volcConfig); err != nil {
-		log.Fatalf("设置火山云配置失败: %v", err)
+		t.Fatalf("设置火山云配置失败: %v", err)
 	}
 
 	// 初始化引擎
 	if err := volcEngine.Initialize(); err != nil {
-		log.Fatalf("初始化火山云引擎失败: %v", err)
+		t.Fatalf("初始化火山云引擎失败: %v", err)
 	}
 
 	fmt.Printf("   引擎名称: %s\n", volcEngine.GetEngineInfo().Name)
 	fmt.Printf("   引擎版本: %s\n", volcEngine.GetEngineInfo().Version)
 	fmt.Printf("   引擎描述: %s\n", volcEngine.GetEngineInfo().Description)
 
+	return volcEngine
+}
+
+// testVolcengineEngineBasic 测试火山云引擎的基本功能
+func testVolcengineEngineBasic(t *testing.T, volcEngine *engines.VolcengineEngine) {
+	t.Helper()
+
 	// 2. 获取支持的语音列表
 	fmt.Println("\n2. 获取支持的语音列表...")
 	voices, err := volcEngine.GetSupportedVoices()
 	if err != nil {
-		log.Printf("获取语音列表失败: %v", err)
+		t.Logf("获取语音列表失败: %v", err)
 	} else {
 		for i, voice := range voices {
 			fmt.Printf("   语音 %d: %s (%s) - %s\n", i+1, voice.Name, voice.ID, voice.Description)
@@ -161,6 +183,18 @@ func main() {
 	stream := realtimetts.NewTextToAudioStream([]realtimetts.TTSEngine{volcEngine}, streamConfig)
 	stream.SetCallbacks(callbacks)
 
+	// 清理资源
+	defer func() {
+		fmt.Println("\n11. 清理资源...")
+		if err := stream.Close(); err != nil {
+			t.Logf("关闭流失败: %v", err)
+		}
+		if err := volcEngine.Close(); err != nil {
+			t.Logf("关闭引擎失败: %v", err)
+		}
+		fmt.Println("\n✅ 测试程序执行完成！")
+	}()
+
 	// 7. 测试文本合成
 	fmt.Println("\n7. 开始文本合成测试...")
 
@@ -176,7 +210,7 @@ func main() {
 	for i, text := range testTexts {
 		fmt.Printf("\n   输入文本 %d: %s\n", i+1, text)
 		if err := stream.Feed(text); err != nil {
-			log.Printf("输入文本失败: %v", err)
+			t.Logf("输入文本失败: %v", err)
 			continue
 		}
 	}
@@ -184,7 +218,7 @@ func main() {
 	// 8. 开始播放
 	fmt.Println("\n8. 开始播放...")
 	if err := stream.Play(); err != nil {
-		log.Fatalf("开始播放失败: %v", err)
+		t.Fatalf("开始播放失败: %v", err)
 	}
 
 	// 等待播放完成
@@ -205,7 +239,7 @@ func main() {
 	// 9. 停止播放
 	fmt.Println("\n9. 停止播放...")
 	if err := stream.Stop(); err != nil {
-		log.Printf("停止播放失败: %v", err)
+		t.Logf("停止播放失败: %v", err)
 	}
 
 	// 10. 获取状态信息
@@ -254,16 +288,32 @@ func main() {
 				100.0-lossPercentage, lossPercentage)
 		}
 	}
+}
 
-	// 11. 清理资源
-	fmt.Println("\n11. 清理资源...")
-	if err := stream.Close(); err != nil {
-		log.Printf("关闭流失败: %v", err)
+// testVolcengineEngineSynthesis 测试火山云引擎的合成功能
+func testVolcengineEngineSynthesis(t *testing.T, volcEngine *engines.VolcengineEngine) {
+	t.Helper()
+	
+	// 这里可以添加更多的合成测试
+	fmt.Println("\n测试火山云引擎合成功能...")
+	
+	// 测试简单的文本合成
+	ctx := context.Background()
+	outputChan, err := volcEngine.Synthesize(ctx, "测试文本合成功能")
+	if err != nil {
+		t.Fatalf("文本合成失败: %v", err)
 	}
-
-	if err := volcEngine.Close(); err != nil {
-		log.Printf("关闭引擎失败: %v", err)
+	
+	// 读取一些音频数据
+	count := 0
+	for audioData := range outputChan {
+		if count < 5 { // 只读取前5个音频块
+			fmt.Printf("收到音频数据: %d 字节\n", len(audioData))
+			count++
+		} else {
+			break
+		}
 	}
-
-	fmt.Println("\n✅ 示例程序执行完成！")
+	
+	fmt.Printf("成功接收 %d 个音频块\n", count)
 }

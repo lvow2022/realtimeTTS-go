@@ -1,4 +1,4 @@
-package realtimetts
+package engines
 
 import (
 	"context"
@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	realtimetts "realtimetts/pkg"
 	"strings"
+	"sync"
 	"time"
-
-	"realtimetts"
 )
 
 // VolcengineEngine 火山云TTS引擎实现
 type VolcengineEngine struct {
-	*BaseEngine
+	*realtimetts.BaseEngine
 	client *http.Client
 	config VolcengineConfig
 
@@ -23,6 +23,10 @@ type VolcengineEngine struct {
 	totalBytesSent  int64 // 总发送字节数
 	totalChunksSent int64 // 总发送块数
 	chunkSequence   int64 // 音频块序列号
+
+	// 控制通道
+	stopChan chan struct{}
+	mu       sync.RWMutex
 }
 
 // VolcengineConfig 火山云配置
@@ -69,7 +73,7 @@ type VolcTimestamp struct {
 
 // NewVolcengineEngine 创建新的火山云TTS引擎
 func NewVolcengineEngine(appID, accessToken, cluster string) *VolcengineEngine {
-	base := NewBaseEngine("Volcengine TTS", "1.0.0", "火山云语音合成服务")
+	base := realtimetts.NewBaseEngine("Volcengine TTS")
 
 	engine := &VolcengineEngine{
 		BaseEngine: base,
@@ -94,6 +98,7 @@ func NewVolcengineEngine(appID, accessToken, cluster string) *VolcengineEngine {
 			TextType:      "plain",
 			Ssml:          false,
 		},
+		stopChan: make(chan struct{}),
 	}
 
 	// 设置默认配置
@@ -107,9 +112,6 @@ func NewVolcengineEngine(appID, accessToken, cluster string) *VolcengineEngine {
 	config.Channels = 1
 
 	engine.SetConfig(*config)
-
-	// 设置合成器接口
-	engine.synthesizer = engine
 
 	return engine
 }
@@ -410,11 +412,15 @@ func (ve *VolcengineEngine) SetConfig(config realtimetts.EngineConfig) error {
 	return nil
 }
 
-// GetEngineInfo 重写获取引擎信息方法
+// GetEngineInfo 获取引擎信息
 func (ve *VolcengineEngine) GetEngineInfo() realtimetts.EngineInfo {
-	info := ve.BaseEngine.GetEngineInfo()
-	info.Capabilities = append(info.Capabilities, "pcm-format", "real-time-synthesis", "timestamp-support")
-	return info
+	return realtimetts.EngineInfo{
+		Name:         "Volcengine TTS",
+		Version:      "1.0.0",
+		Description:  "火山云语音合成服务",
+		Capabilities: []string{"pcm-format", "real-time-synthesis", "timestamp-support", "text-to-speech", "voice-selection"},
+		Config:       make(map[string]string),
+	}
 }
 
 // SetVolcengineConfig 设置火山云特定配置
@@ -442,4 +448,81 @@ func (ve *VolcengineEngine) GetVolcengineStats() (int64, int64) {
 	ve.mu.RLock()
 	defer ve.mu.RUnlock()
 	return ve.totalBytesSent, ve.totalChunksSent
+}
+
+// TTSEngine 接口实现
+
+// GetStreamInfo 返回音频配置信息
+func (ve *VolcengineEngine) GetStreamInfo() *realtimetts.AudioConfiguration {
+	return &realtimetts.AudioConfiguration{
+		Format:        realtimetts.FormatWAV,
+		Channels:      ve.config.Channels,
+		SampleRate:    ve.config.Rate,
+		BitsPerSample: ve.config.BitDepth,
+		Volume:        1.0,
+	}
+}
+
+// Synthesize 执行文本到音频的合成
+func (ve *VolcengineEngine) Synthesize(ctx context.Context, text string) (<-chan []byte, error) {
+	outputChan := make(chan []byte, 100)
+
+	go func() {
+		defer close(outputChan)
+		if err := ve.DoSynthesize(ctx, text, outputChan); err != nil {
+			fmt.Printf("火山云合成失败: %v\n", err)
+		}
+	}()
+
+	return outputChan, nil
+}
+
+// GetVoices 获取可用语音列表
+func (ve *VolcengineEngine) GetVoices() ([]realtimetts.Voice, error) {
+	return ve.GetSupportedVoices()
+}
+
+// SetVoice 设置使用的语音
+func (ve *VolcengineEngine) SetVoice(voice realtimetts.Voice) error {
+	ve.mu.Lock()
+	defer ve.mu.Unlock()
+	ve.config.VoiceType = voice.ID
+	return nil
+}
+
+// SetVoiceParameters 设置语音参数
+func (ve *VolcengineEngine) SetVoiceParameters(params map[string]interface{}) error {
+	ve.mu.Lock()
+	defer ve.mu.Unlock()
+
+	if speed, ok := params["speed"].(float64); ok {
+		ve.config.SpeedRatio = float32(speed)
+	}
+	if volume, ok := params["volume"].(float64); ok {
+		ve.config.VolumeRatio = float32(volume)
+	}
+	if pitch, ok := params["pitch"].(float64); ok {
+		ve.config.PitchRatio = float32(pitch)
+	}
+
+	return nil
+}
+
+// SetAudioBuffer 设置音频缓冲管理器
+func (ve *VolcengineEngine) SetAudioBuffer(audioBuffer *realtimetts.AudioBuffer) {
+	ve.BaseEngine.SetAudioBuffer(audioBuffer)
+}
+
+// Initialize 初始化引擎
+func (ve *VolcengineEngine) Initialize() error {
+	return ve.doInitialize()
+}
+
+// Close 关闭引擎
+func (ve *VolcengineEngine) Close() error {
+	ve.mu.Lock()
+	defer ve.mu.Unlock()
+
+	close(ve.stopChan)
+	return nil
 }

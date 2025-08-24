@@ -61,6 +61,15 @@ func (f AudioFormat) String() string {
 	}
 }
 
+// EngineInfo 引擎信息结构体
+type EngineInfo struct {
+	Name         string            // 引擎名称
+	Version      string            // 引擎版本
+	Description  string            // 引擎描述
+	Capabilities []string          // 引擎能力
+	Config       map[string]string // 引擎配置
+}
+
 // TTSEngine TTS引擎接口
 // 定义所有TTS引擎必须实现的接口
 type TTSEngine interface {
@@ -81,4 +90,13 @@ type TTSEngine interface {
 
 	// SetAudioBuffer 设置音频缓冲管理器
 	SetAudioBuffer(audioBuffer *AudioBuffer)
+
+	// GetEngineInfo 获取引擎信息
+	GetEngineInfo() EngineInfo
+
+	// Initialize 初始化引擎
+	Initialize() error
+
+	// Close 关闭引擎
+	Close() error
 }

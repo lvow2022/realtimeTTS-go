@@ -63,24 +63,33 @@ RealtimeTTS 是一个高性能的实时文本转语音系统，采用流式架�
 
 ### 重构后的架构特点
 
-**扁平化目录结构**：
+**模块化目录结构**：
 ```
 RealtimeTTS-Go/
-├── types.go              # TTSEngine 接口定义
-├── base_engine.go        # BaseEngine 工具类
-├── azure_engine.go       # Azure 引擎实现
-├── openai_engine.go      # OpenAI 引擎实现
-├── volc_engine.go        # Volc 引擎实现
-├── textToAudioStream.go  # 主控制器
-├── audioBuffer.go        # 音频缓冲管理
-├── streamPlayer.go       # 流播放器
-├── audioStream.go        # 音频流管理
-├── audioConfig.go        # 音频配置
-├── callbacks.go          # 回调系统
-├── errors.go             # 错误定义
-├── engine_factory.go     # 引擎工厂
-└── example_test.go       # 测试示例
+├── pkg/                    # 核心包
+│   ├── types.go           # TTSEngine 接口定义
+│   ├── baseEngine.go      # BaseEngine 工具类 (驼峰命名)
+│   ├── textToAudioStream.go # 主控制器
+│   ├── audioBuffer.go     # 音频缓冲管理
+│   ├── streamPlayer.go    # 流播放器
+│   ├── audioStream.go     # 音频流管理
+│   ├── audioConfig.go     # 音频配置
+│   ├── callbacks.go       # 回调系统
+│   └── errors.go          # 错误定义
+├── engines/               # 引擎实现包
+│   ├── volcEngine.go      # 火山云引擎 (驼峰命名)
+│   ├── volcEngine_test.go # 火山云引擎测试 (驼峰命名)
+│   ├── azureEngine.go     # Azure 引擎实现 (未来)
+│   └── openaiEngine.go    # OpenAI 引擎实现 (未来)
+├── example/               # 示例程序
+│   └── interactive_demo/
+└── 其他文件...
 ```
+
+**包组织设计**：
+- **`pkg/` 包**：包含核心功能模块，所有文件属于 `realtimetts` 包
+- **`engines/` 包**：包含引擎实现，每个引擎文件属于 `engines` 包
+- **模块化设计**：核心功能和引擎实现分离，便于维护和扩展
 
 **依赖注入模式**：
 - `TextToAudioStream` 统一创建和管理 `AudioBuffer`
@@ -90,7 +99,12 @@ RealtimeTTS-Go/
 **工具类设计**：
 - `BaseEngine` 作为纯工具类，不实现 `TTSEngine` 接口
 - 提供基础属性和工具方法，供具体引擎复用
-- 具体引擎通过嵌入 `*BaseEngine` 来获得基础功能
+- 具体引擎通过嵌入 `*realtimetts.BaseEngine` 来获得基础功能
+
+**命名规范**：
+- 所有Go文件采用驼峰命名法（如 `baseEngine.go`、`volcEngine.go`）
+- 测试文件遵循Go测试命名规范（如 `volcEngine_test.go`）
+- 包名使用小写字母，符合Go语言规范
 
 ### 核心组件
 1. **TextToAudioStream**：主控制器，协调整个TTS流程
@@ -477,20 +491,27 @@ def _on_audio_stream_start(self):
 
 ### 扩展示例
 ```go
+package engines
+
+import (
+    "context"
+    "realtimetts/pkg"
+)
+
 type CustomEngine struct {
-    *BaseEngine  // 嵌入基础功能
+    *pkg.BaseEngine  // 嵌入基础功能
     // 自定义字段
     customConfig map[string]interface{}
 }
 
 func NewCustomEngine() *CustomEngine {
     return &CustomEngine{
-        BaseEngine: NewBaseEngine("custom_engine"),
+        BaseEngine: pkg.NewBaseEngine("custom_engine"),
         customConfig: make(map[string]interface{}),
     }
 }
 
-func (ce *CustomEngine) GetStreamInfo() *AudioConfiguration {
+func (ce *CustomEngine) GetStreamInfo() *pkg.AudioConfiguration {
     // 使用基础工具方法
     config := ce.GetDefaultStreamInfo()
     // 应用自定义配置
@@ -510,14 +531,14 @@ func (ce *CustomEngine) Synthesize(ctx context.Context, text string) (<-chan []b
     return outputChan, nil
 }
 
-func (ce *CustomEngine) GetVoices() ([]Voice, error) {
+func (ce *CustomEngine) GetVoices() ([]pkg.Voice, error) {
     // 返回自定义语音列表
-    return []Voice{
+    return []pkg.Voice{
         {ID: "custom_voice_1", Name: "Custom Voice 1", Language: "en"},
     }, nil
 }
 
-func (ce *CustomEngine) SetVoice(voice Voice) error {
+func (ce *CustomEngine) SetVoice(voice pkg.Voice) error {
     // 自定义语音设置逻辑
     return nil
 }
@@ -528,9 +549,28 @@ func (ce *CustomEngine) SetVoiceParameters(params map[string]interface{}) error 
     return nil
 }
 
-func (ce *CustomEngine) SetAudioBuffer(audioBuffer *AudioBuffer) {
+func (ce *CustomEngine) SetAudioBuffer(audioBuffer *pkg.AudioBuffer) {
     // 使用基础方法设置音频缓冲
-    ce.audioBuffer = audioBuffer
+    ce.BaseEngine.SetAudioBuffer(audioBuffer)
+}
+
+// 实现其他必需的接口方法
+func (ce *CustomEngine) GetEngineInfo() pkg.EngineInfo {
+    return pkg.EngineInfo{
+        Name:         "Custom Engine",
+        Version:      "1.0.0",
+        Description:  "Custom TTS Engine",
+        Capabilities: []string{"text-to-speech", "voice-selection"},
+        Config:       make(map[string]string),
+    }
+}
+
+func (ce *CustomEngine) Initialize() error {
+    return nil
+}
+
+func (ce *CustomEngine) Close() error {
+    return nil
 }
 ```
 
@@ -541,16 +581,16 @@ func (ce *CustomEngine) SetAudioBuffer(audioBuffer *AudioBuffer) {
 package main
 
 import (
-    "realtimetts"
+    "realtimetts/pkg"
     "realtimetts/engines"
 )
 
 func main() {
     // 创建引擎
-    engine := engines.NewAzureEngine("your_api_key", "your_region")
+    engine := engines.NewVolcengineEngine("your_app_id", "your_access_token", "your_cluster")
     
     // 创建流
-    tts := realtimetts.NewTextToAudioStream([]realtimetts.TTSEngine{engine}, nil)
+    tts := pkg.NewTextToAudioStream([]pkg.TTSEngine{engine}, nil)
     
     // 输入文本并播放
     tts.Feed("Hello, this is a test.")
@@ -569,15 +609,16 @@ tts.Resume()
 tts.Stop()
 
 // 多引擎支持
-engines := []realtimetts.TTSEngine{
-    engines.NewAzureEngine("azure_key", "region"),
-    engines.NewOpenAIEngine("openai_key"),
-    engines.NewVolcEngine("volc_key"),
+engineList := []pkg.TTSEngine{
+    engines.NewVolcengineEngine("volc_app_id", "volc_token", "volc_cluster"),
+    // 未来支持更多引擎
+    // engines.NewAzureEngine("azure_key", "region"),
+    // engines.NewOpenAIEngine("openai_key"),
 }
-tts := realtimetts.NewTextToAudioStream(engines, nil)
+tts := pkg.NewTextToAudioStream(engineList, nil)
 
 // 设置回调函数
-tts.SetCallbacks(&realtimetts.Callbacks{
+tts.SetCallbacks(&pkg.Callbacks{
     OnAudioChunk: func(data []byte) {
         // 处理音频块
     },
@@ -589,8 +630,8 @@ tts.SetCallbacks(&realtimetts.Callbacks{
 
 ### 配置参数
 ```go
-config := &realtimetts.StreamConfig{
-    AudioConfig:             realtimetts.DefaultAudioConfig(),
+config := &pkg.StreamConfig{
+    AudioConfig:             pkg.DefaultAudioConfig(),
     BufferThresholdSeconds:  2.0,
     MinimumSentenceLength:   10,
     FastSentenceFragment:    true,
@@ -604,13 +645,13 @@ config := &realtimetts.StreamConfig{
     Muted:                   false,
 }
 
-tts := realtimetts.NewTextToAudioStream(engines, config)
+tts := pkg.NewTextToAudioStream(engineList, config)
 ```
 
 ### 播放参数
 ```go
 // 播放参数通过 StreamConfig 配置
-config := &realtimetts.StreamConfig{
+config := &pkg.StreamConfig{
     FastSentenceFragment:    true,           // 快速句子片段
     BufferThresholdSeconds:  2.0,            // 缓冲阈值
     MinimumSentenceLength:   10,             // 最小句子长度
@@ -619,7 +660,7 @@ config := &realtimetts.StreamConfig{
     OutputWavFile:           "output.wav",   // 输出文件
 }
 
-tts := realtimetts.NewTextToAudioStream(engines, config)
+tts := pkg.NewTextToAudioStream(engineList, config)
 ```
 
 ## 总结
@@ -635,7 +676,8 @@ RealtimeTTS系统通过以下设计原则实现了高效的实时语音合成：
 6. **实时性好**：优化的缓冲策略，实现低延迟播放
 7. **依赖注入**：通过 `SetAudioBuffer` 实现音频缓冲的统一管理
 8. **工具类模式**：`BaseEngine` 作为工具类，提供基础功能复用
-9. **扁平化结构**：所有文件在同一包中，便于管理和维护
+9. **包组织优化**：`pkg/` 和 `engines/` 分离，便于管理和扩展
+10. **命名规范统一**：采用驼峰命名法，符合Go语言最佳实践
 
 ### 技术特色
 - **队列驱动**：使用队列进行线程间通信，保证数据安全
@@ -644,7 +686,9 @@ RealtimeTTS系统通过以下设计原则实现了高效的实时语音合成：
 - **格式兼容**：支持多种音频格式和编码方式
 - **性能监控**：内置性能监控和日志记录
 - **接口统一**：`TTSEngine` 接口定义统一的引擎行为
-- **组合模式**：具体引擎通过嵌入 `BaseEngine` 获得基础功能
+- **组合模式**：具体引擎通过嵌入 `pkg.BaseEngine` 获得基础功能
+- **包组织**：`pkg/` 核心包和 `engines/` 引擎包分离，便于维护
+- **命名规范**：统一的驼峰命名风格，符合Go语言规范
 - **Go 语言特性**：充分利用 Go 的并发、接口和组合特性
 
 ### 应用场景
