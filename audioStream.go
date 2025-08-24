@@ -285,7 +285,6 @@ func (as *AudioStream) WriteAudioData(data []byte) error {
 		return nil
 	default:
 		// 缓冲区满了，等待一段时间再尝试
-		fmt.Printf("   ⏳ 音频缓冲区满了，等待空间...\n")
 		select {
 		case as.audioBuffer <- audioData:
 			return nil

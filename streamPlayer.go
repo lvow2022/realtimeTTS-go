@@ -12,7 +12,7 @@ import (
 // 负责将音频流从buffer 中取出，送入 audioStream
 // 提供 start/stop/pause/resume/mute 接口
 type StreamPlayer struct {
-	bufferManager *AudioBufferManager
+	bufferManager *AudioBuffer
 	audioStream   *AudioStream
 
 	// 播放控制
@@ -54,22 +54,18 @@ type PlaybackStats struct {
 }
 
 // NewStreamPlayer 创建新的流播放器
-func NewStreamPlayer(ttsAudioChan chan [][]byte, config *AudioConfiguration, bufferSize int) *StreamPlayer {
-	bufferManager := NewAudioBufferManager(ttsAudioChan, config, bufferSize)
+func NewStreamPlayer(audioBuffer *AudioBuffer, config *AudioConfiguration, bufferSize int) *StreamPlayer {
 	audioStream := NewAudioStream(config)
 
-	// 启动缓冲管理器
-	bufferManager.Start()
-
 	return &StreamPlayer{
-		bufferManager:    bufferManager,
+		bufferManager:    audioBuffer,
 		audioStream:      audioStream,
 		playbackThread:   nil,
 		playbackActive:   false,
 		playbackPaused:   false,
 		immediateStop:    make(chan struct{}),
-		pauseEvent:       make(chan struct{}),
-		resumeEvent:      make(chan struct{}),
+		pauseEvent:       make(chan struct{}, 1),
+		resumeEvent:      make(chan struct{}, 1),
 		onAudioChunk:     nil,
 		onWord:           nil,
 		onPlaybackStart:  nil,
@@ -200,7 +196,13 @@ func (sp *StreamPlayer) Pause() error {
 	}
 
 	sp.playbackPaused = true
-	close(sp.pauseEvent)
+
+	// 发送暂停信号
+	select {
+	case sp.pauseEvent <- struct{}{}:
+	default:
+		// 通道已满，忽略
+	}
 
 	// 触发回调
 	if sp.onPlaybackPause != nil {
@@ -224,7 +226,13 @@ func (sp *StreamPlayer) Resume() error {
 	}
 
 	sp.playbackPaused = false
-	close(sp.resumeEvent)
+
+	// 发送恢复信号
+	select {
+	case sp.resumeEvent <- struct{}{}:
+	default:
+		// 通道已满，忽略
+	}
 
 	// 触发回调
 	if sp.onPlaybackResume != nil {
@@ -400,18 +408,11 @@ func (sp *StreamPlayer) playbackWorker() {
 
 		case <-ticker.C:
 			loopCount++
-			// 每100次循环（约1秒）打印一次状态
-			if loopCount%100 == 0 {
-				fmt.Printf("   🔄 playbackWorker 运行中... (循环次数: %d)\n", loopCount)
-			}
 
 			// 处理音频数据
 			if err := sp.processAudioChunk(); err != nil {
 				// 如果缓冲区为空，继续等待
 				if err == ErrBufferTimeout {
-					if loopCount%100 == 0 { // 减少日志频率
-						fmt.Printf("   ⏳ 缓冲区超时，继续等待... (循环次数: %d)\n", loopCount)
-					}
 					continue
 				}
 				// 其他错误，停止播放
@@ -433,9 +434,6 @@ func (sp *StreamPlayer) processAudioChunk() error {
 	if err != nil {
 		return err
 	}
-
-	// 调试信息：显示获取到的音频数据大小
-	fmt.Printf("   📥 从缓冲区获取音频数据: %d 字节\n", len(audioData))
 
 	// 写入音频流
 	if err := sp.audioStream.WriteAudioData(audioData); err != nil {

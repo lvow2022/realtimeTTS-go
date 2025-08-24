@@ -74,11 +74,14 @@ func NewTextToAudioStream(engines []TTSEngine, config *StreamConfig) *TextToAudi
 		config = DefaultStreamConfig()
 	}
 
-	// 创建音频通道
-	ttsAudioChan := make(chan [][]byte, 1000)
+	// 创建统一的音频缓冲管理器
+	audioBuffer := NewAudioBuffer(make(chan [][]byte, 1000), config.AudioConfig, 1000)
+
+	// 启动音频缓冲管理器
+	audioBuffer.Start()
 
 	// 创建播放器
-	player := NewStreamPlayer(ttsAudioChan, config.AudioConfig, 1000)
+	player := NewStreamPlayer(audioBuffer, config.AudioConfig, 1000)
 
 	// 创建回调系统
 	callbacks := NewCallbacks()
@@ -98,7 +101,7 @@ func NewTextToAudioStream(engines []TTSEngine, config *StreamConfig) *TextToAudi
 		engineFactory: NewEngineFactory(),
 		player:        player,
 		playLock:      sync.Mutex{},
-		ttsAudioChan:  ttsAudioChan,
+		ttsAudioChan:  make(chan [][]byte, 1000),
 		textBuffer:    make(chan string, 100),
 		charBuffer:    make(chan rune, 1000),
 		textProcessor: textProcessor,
@@ -108,6 +111,11 @@ func NewTextToAudioStream(engines []TTSEngine, config *StreamConfig) *TextToAudi
 		ctx:           ctx,
 		cancel:        cancel,
 		config:        config,
+	}
+
+	// 将AudioBuffer注入到所有引擎中
+	for _, engine := range engines {
+		engine.SetAudioBuffer(audioBuffer)
 	}
 
 	// 设置播放器回调

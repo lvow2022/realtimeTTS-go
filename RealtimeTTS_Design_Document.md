@@ -35,7 +35,14 @@ RealtimeTTS 是一个高性能的实时文本转语音系统，采用流式架�
                               │
                               ▼
                        ┌─────────────────┐
-                       │   BaseEngine    │
+                       │   TTSEngine     │◄───┐
+                       │   Interface     │    │
+                       └─────────────────┘    │
+                              │               │
+                              ▼               │
+                       ┌─────────────────┐    │
+                       │   BaseEngine    │────┘
+                       │   (Tool Class)  │
                        └─────────────────┘
                               │
                               ▼
@@ -53,6 +60,37 @@ RealtimeTTS 是一个高性能的实时文本转语音系统，采用流式架�
                        │ PyAudio / mpv   │
                        └─────────────────┘
 ```
+
+### 重构后的架构特点
+
+**扁平化目录结构**：
+```
+RealtimeTTS-Go/
+├── types.go              # TTSEngine 接口定义
+├── base_engine.go        # BaseEngine 工具类
+├── azure_engine.go       # Azure 引擎实现
+├── openai_engine.go      # OpenAI 引擎实现
+├── volc_engine.go        # Volc 引擎实现
+├── textToAudioStream.go  # 主控制器
+├── audioBuffer.go        # 音频缓冲管理
+├── streamPlayer.go       # 流播放器
+├── audioStream.go        # 音频流管理
+├── audioConfig.go        # 音频配置
+├── callbacks.go          # 回调系统
+├── errors.go             # 错误定义
+├── engine_factory.go     # 引擎工厂
+└── example_test.go       # 测试示例
+```
+
+**依赖注入模式**：
+- `TextToAudioStream` 统一创建和管理 `AudioBuffer`
+- 通过 `SetAudioBuffer` 方法将 `AudioBuffer` 注入到所有引擎
+- 实现了音频缓冲的统一管理和控制
+
+**工具类设计**：
+- `BaseEngine` 作为纯工具类，不实现 `TTSEngine` 接口
+- 提供基础属性和工具方法，供具体引擎复用
+- 具体引擎通过嵌入 `*BaseEngine` 来获得基础功能
 
 ### 核心组件
 1. **TextToAudioStream**：主控制器，协调整个TTS流程
@@ -90,35 +128,74 @@ class TextToAudioStream:
 - `pause()/resume()/stop()`: 播放控制
 - `load_engine()`: 加载TTS引擎
 
-### BaseEngine 引擎抽象层
+### BaseEngine 引擎工具类
 
-**设计模式**：模板方法模式 + 策略模式
+**设计模式**：组合模式 + 工具类模式
 
-**核心抽象方法**：
-```python
-class BaseEngine(ABC):
-    def get_stream_info(self) -> tuple:
-        """返回音频流配置信息 (format, channels, rate)"""
-        raise NotImplementedError
+**设计理念**：
+- `BaseEngine` 作为纯工具类，不实现 `TTSEngine` 接口
+- 提供基础属性和工具方法，供具体引擎复用
+- 具体引擎通过嵌入 `*BaseEngine` 来获得基础功能
+
+**核心属性**：
+```go
+type BaseEngine struct {
+    // 基本属性
+    engineName           string
+    canConsumeGenerators bool
     
-    def synthesize(self, text: str) -> bool:
-        """将文本合成为音频流"""
-        raise NotImplementedError
+    // 音频缓冲管理
+    audioBuffer *AudioBuffer
     
-    def get_voices(self) -> list:
-        """获取可用的语音列表"""
-        raise NotImplementedError
+    // 回调函数
+    onAudioChunk    func([]byte)
+    onPlaybackStart func()
     
-    def set_voice(self, voice):
-        """设置语音"""
-        raise NotImplementedError
+    // 控制
+    stopSynthesisChan chan struct{}
+    
+    // 音频时长
+    audioDuration time.Duration
+}
 ```
 
-**通用功能**：
-- 音频处理（淡入淡出、静音修剪）
-- 队列管理（音频数据、时间信息）
-- 错误处理和引擎切换
-- 音频格式转换
+**工具方法**：
+```go
+// 基础工具方法
+func (be *BaseEngine) GetEngineName() string
+func (be *BaseEngine) SetCanConsumeGenerators(can bool)
+func (be *BaseEngine) CanConsumeGenerators() bool
+
+// 回调设置
+func (be *BaseEngine) SetOnAudioChunk(callback func([]byte))
+func (be *BaseEngine) SetOnPlaybackStart(callback func())
+
+// 控制方法
+func (be *BaseEngine) StopSynthesis()
+func (be *BaseEngine) ResetAudioDuration()
+func (be *BaseEngine) GetAudioDuration() time.Duration
+
+// 默认配置
+func (be *BaseEngine) GetDefaultStreamInfo() *AudioConfiguration
+func (be *BaseEngine) GetDefaultVoices() []Voice
+```
+
+**具体引擎实现示例**：
+```go
+type AzureEngine struct {
+    *BaseEngine  // 嵌入基础功能
+    client       *http.Client
+    authToken    string
+}
+
+func (ae *AzureEngine) GetStreamInfo() *AudioConfiguration {
+    // 使用基础工具方法
+    config := ae.GetDefaultStreamInfo()
+    // 修改为 Azure 特定配置
+    config.SampleRate = 24000
+    return config
+}
+```
 
 ### StreamPlayer 音频播放器
 
@@ -143,16 +220,19 @@ class StreamPlayer:
 ## 数据流设计
 
 ### 队列机制
-```python
-# 在BaseEngine中定义
-self.queue = queue.Queue()      # 音频数据队列
-self.timings = queue.Queue()    # 时间信息队列
+```go
+// 在BaseEngine中定义
+type BaseEngine struct {
+    audioBuffer *AudioBuffer    // 音频缓冲管理器
+    stopSynthesisChan chan struct{}  // 停止合成通道
+}
 ```
 
 **数据流向**：
-1. TTS引擎合成音频 → 放入audio_queue
-2. StreamPlayer从audio_queue读取 → 播放
-3. 时间信息放入timings_queue → 单词级回调
+1. TTS引擎合成音频 → 通过 `AudioBuffer` 管理
+2. `TextToAudioStream` 统一创建和管理 `AudioBuffer`
+3. 通过依赖注入将 `AudioBuffer` 注入到所有引擎中
+4. 时间信息通过回调函数处理 → 单词级回调
 
 ### 缓冲策略
 ```python
@@ -380,9 +460,10 @@ def _on_audio_stream_start(self):
 ## 扩展性设计
 
 ### 引擎扩展
-- **统一接口**：所有引擎继承BaseEngine，实现统一接口
-- **插件化**：可以轻松添加新的TTS引擎
+- **统一接口**：所有引擎实现 `TTSEngine` 接口，嵌入 `BaseEngine` 获得基础功能
+- **插件化**：可以轻松添加新的TTS引擎，只需实现接口方法
 - **配置灵活**：支持引擎特定参数配置
+- **依赖注入**：通过 `SetAudioBuffer` 方法实现音频缓冲的依赖注入
 
 ### 输出扩展
 - **多种格式**：支持WAV、MPEG、MP3等格式
@@ -395,85 +476,150 @@ def _on_audio_stream_start(self):
 - **实时控制**：支持播放过程中的参数调整
 
 ### 扩展示例
-```python
-class CustomEngine(BaseEngine):
-    def __init__(self):
-        super().__init__()
-        self.engine_name = "custom_engine"
-    
-    def get_stream_info(self):
-        return (pyaudio.paInt16, 1, 16000)
-    
-    def synthesize(self, text):
-        # 实现自定义合成逻辑
-        audio_data = self._custom_synthesis(text)
-        self.queue.put(audio_data.tobytes())
-        return True
+```go
+type CustomEngine struct {
+    *BaseEngine  // 嵌入基础功能
+    // 自定义字段
+    customConfig map[string]interface{}
+}
+
+func NewCustomEngine() *CustomEngine {
+    return &CustomEngine{
+        BaseEngine: NewBaseEngine("custom_engine"),
+        customConfig: make(map[string]interface{}),
+    }
+}
+
+func (ce *CustomEngine) GetStreamInfo() *AudioConfiguration {
+    // 使用基础工具方法
+    config := ce.GetDefaultStreamInfo()
+    // 应用自定义配置
+    config.SampleRate = 22050
+    return config
+}
+
+func (ce *CustomEngine) Synthesize(ctx context.Context, text string) (<-chan []byte, error) {
+    // 实现自定义合成逻辑
+    outputChan := make(chan []byte, 100)
+    go func() {
+        defer close(outputChan)
+        // 自定义合成实现
+        audioData := ce.customSynthesis(text)
+        outputChan <- audioData
+    }()
+    return outputChan, nil
+}
+
+func (ce *CustomEngine) GetVoices() ([]Voice, error) {
+    // 返回自定义语音列表
+    return []Voice{
+        {ID: "custom_voice_1", Name: "Custom Voice 1", Language: "en"},
+    }, nil
+}
+
+func (ce *CustomEngine) SetVoice(voice Voice) error {
+    // 自定义语音设置逻辑
+    return nil
+}
+
+func (ce *CustomEngine) SetVoiceParameters(params map[string]interface{}) error {
+    // 自定义参数设置逻辑
+    ce.customConfig = params
+    return nil
+}
+
+func (ce *CustomEngine) SetAudioBuffer(audioBuffer *AudioBuffer) {
+    // 使用基础方法设置音频缓冲
+    ce.audioBuffer = audioBuffer
+}
 ```
 
 ## 使用指南
 
 ### 基本使用
-```python
-from RealtimeTTS import TextToAudioStream
-from RealtimeTTS.engines import AzureEngine
+```go
+package main
 
-# 创建引擎
-engine = AzureEngine(api_key="your_key")
+import (
+    "realtimetts"
+    "realtimetts/engines"
+)
 
-# 创建流
-tts = TextToAudioStream(engine)
-
-# 输入文本并播放
-tts.feed("Hello, this is a test.")
-tts.play()
+func main() {
+    // 创建引擎
+    engine := engines.NewAzureEngine("your_api_key", "your_region")
+    
+    // 创建流
+    tts := realtimetts.NewTextToAudioStream([]realtimetts.TTSEngine{engine}, nil)
+    
+    // 输入文本并播放
+    tts.Feed("Hello, this is a test.")
+    tts.Play()
+}
 ```
 
 ### 高级使用
-```python
-# 异步播放
-tts.play_async(
-    fast_sentence_fragment=True,
-    buffer_threshold_seconds=1.0,
-    minimum_sentence_length=5,
-    on_audio_chunk=my_callback
-)
+```go
+// 异步播放
+tts.PlayAsync()
 
-# 播放控制
-tts.pause()
-tts.resume()
-tts.stop()
+// 播放控制
+tts.Pause()
+tts.Resume()
+tts.Stop()
 
-# 多引擎支持
-engines = [AzureEngine(), OpenAIEngine(), CoquiEngine()]
-tts = TextToAudioStream(engines)
+// 多引擎支持
+engines := []realtimetts.TTSEngine{
+    engines.NewAzureEngine("azure_key", "region"),
+    engines.NewOpenAIEngine("openai_key"),
+    engines.NewVolcEngine("volc_key"),
+}
+tts := realtimetts.NewTextToAudioStream(engines, nil)
+
+// 设置回调函数
+tts.SetCallbacks(&realtimetts.Callbacks{
+    OnAudioChunk: func(data []byte) {
+        // 处理音频块
+    },
+    OnWord: func(word string) {
+        // 处理单词事件
+    },
+})
 ```
 
 ### 配置参数
-```python
-tts = TextToAudioStream(
-    engine=engine,
-    log_characters=True,           # 记录字符处理
-    on_character=char_callback,    # 字符回调
-    on_word=word_callback,         # 单词回调
-    output_device_index=1,         # 输出设备
-    tokenizer="nltk",              # 分词器
-    language="en",                 # 语言
-    muted=False                    # 静音模式
-)
+```go
+config := &realtimetts.StreamConfig{
+    AudioConfig:             realtimetts.DefaultAudioConfig(),
+    BufferThresholdSeconds:  2.0,
+    MinimumSentenceLength:   10,
+    FastSentenceFragment:    true,
+    CommaSilenceDuration:    100 * time.Millisecond,
+    SentenceSilenceDuration: 300 * time.Millisecond,
+    OutputWavFile:           "",
+    LogCharacters:           false,
+    OutputDeviceIndex:       0,
+    Tokenizer:               "nltk",
+    Language:                "en",
+    Muted:                   false,
+}
+
+tts := realtimetts.NewTextToAudioStream(engines, config)
 ```
 
 ### 播放参数
-```python
-tts.play(
-    fast_sentence_fragment=True,           # 快速句子片段
-    buffer_threshold_seconds=2.0,          # 缓冲阈值
-    minimum_sentence_length=10,            # 最小句子长度
-    comma_silence_duration=0.1,            # 逗号后静音
-    sentence_silence_duration=0.3,         # 句子后静音
-    output_wavfile="output.wav",           # 输出文件
-    on_sentence_synthesized=sentence_cb    # 句子合成回调
-)
+```go
+// 播放参数通过 StreamConfig 配置
+config := &realtimetts.StreamConfig{
+    FastSentenceFragment:    true,           // 快速句子片段
+    BufferThresholdSeconds:  2.0,            // 缓冲阈值
+    MinimumSentenceLength:   10,             // 最小句子长度
+    CommaSilenceDuration:    100 * time.Millisecond,  // 逗号后静音
+    SentenceSilenceDuration: 300 * time.Millisecond,  // 句子后静音
+    OutputWavFile:           "output.wav",   // 输出文件
+}
+
+tts := realtimetts.NewTextToAudioStream(engines, config)
 ```
 
 ## 总结
@@ -487,6 +633,9 @@ RealtimeTTS系统通过以下设计原则实现了高效的实时语音合成：
 4. **容错机制**：引擎故障自动切换，提高可靠性
 5. **扩展性强**：支持多种引擎和格式，易于集成
 6. **实时性好**：优化的缓冲策略，实现低延迟播放
+7. **依赖注入**：通过 `SetAudioBuffer` 实现音频缓冲的统一管理
+8. **工具类模式**：`BaseEngine` 作为工具类，提供基础功能复用
+9. **扁平化结构**：所有文件在同一包中，便于管理和维护
 
 ### 技术特色
 - **队列驱动**：使用队列进行线程间通信，保证数据安全
@@ -494,6 +643,9 @@ RealtimeTTS系统通过以下设计原则实现了高效的实时语音合成：
 - **设备适配**：自动检测和适配音频设备能力
 - **格式兼容**：支持多种音频格式和编码方式
 - **性能监控**：内置性能监控和日志记录
+- **接口统一**：`TTSEngine` 接口定义统一的引擎行为
+- **组合模式**：具体引擎通过嵌入 `BaseEngine` 获得基础功能
+- **Go 语言特性**：充分利用 Go 的并发、接口和组合特性
 
 ### 应用场景
 - **实时语音助手**：需要低延迟响应的语音交互

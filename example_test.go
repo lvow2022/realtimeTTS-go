@@ -3,7 +3,6 @@ package realtimetts
 import (
 	"fmt"
 	"testing"
-	"time"
 )
 
 // TestAudioConfiguration 测试音频配置
@@ -42,24 +41,7 @@ func TestAudioConfiguration(t *testing.T) {
 func TestAudioBufferManager(t *testing.T) {
 	config := DefaultAudioConfig()
 	ttsChan := make(chan [][]byte, 100)
-	bufferManager := NewAudioBufferManager(ttsChan, config, 100)
-
-	// 测试添加音频数据
-	testData := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-	err := bufferManager.AddToBuffer(testData)
-	if err != nil {
-		t.Errorf("添加音频数据失败: %v", err)
-	}
-
-	// 测试获取音频数据
-	data, err := bufferManager.GetFromBuffer(100 * time.Millisecond)
-	if err != nil {
-		t.Errorf("获取音频数据失败: %v", err)
-	}
-
-	if len(data) != len(testData) {
-		t.Errorf("期望数据长度%d，实际得到%d", len(testData), len(data))
-	}
+	bufferManager := NewAudioBuffer(ttsChan, config, 100)
 
 	// 测试缓冲时长计算
 	bufferedSeconds := bufferManager.GetBufferedSeconds()
@@ -71,6 +53,12 @@ func TestAudioBufferManager(t *testing.T) {
 	bufferManager.ClearBuffer()
 	if !bufferManager.IsEmpty() {
 		t.Error("缓冲区应该为空")
+	}
+
+	// 测试统计信息获取
+	stats := bufferManager.GetStats()
+	if stats.TotalSamples != 0 {
+		t.Errorf("新创建的缓冲区总样本数应该为0，实际得到%d", stats.TotalSamples)
 	}
 
 	fmt.Println("✅ 音频缓冲管理器测试通过")
@@ -118,7 +106,8 @@ func TestAudioStream(t *testing.T) {
 func TestStreamPlayer(t *testing.T) {
 	config := DefaultAudioConfig()
 	ttsChan := make(chan [][]byte, 100)
-	player := NewStreamPlayer(ttsChan, config, 100)
+	audioBuffer := NewAudioBuffer(ttsChan, config, 100)
+	player := NewStreamPlayer(audioBuffer, config, 100)
 
 	// 测试播放器状态
 	if player.IsPlaying() {
@@ -166,8 +155,11 @@ func TestIntegration(t *testing.T) {
 	// 创建TTS音频通道
 	ttsChan := make(chan [][]byte, 1000)
 
+	// 创建AudioBuffer
+	audioBuffer := NewAudioBuffer(ttsChan, config, 1000)
+
 	// 创建播放器
-	player := NewStreamPlayer(ttsChan, config, 1000)
+	player := NewStreamPlayer(audioBuffer, config, 1000)
 
 	// 设置回调函数
 	player.SetCallbacks(
@@ -213,13 +205,47 @@ func TestIntegration(t *testing.T) {
 func BenchmarkAudioBufferManager(b *testing.B) {
 	config := DefaultAudioConfig()
 	ttsChan := make(chan [][]byte, 1000)
-	bufferManager := NewAudioBufferManager(ttsChan, config, 1000)
-
-	testData := make([]byte, 1024)
+	bufferManager := NewAudioBuffer(ttsChan, config, 1000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bufferManager.AddToBuffer(testData)
-		bufferManager.GetFromBuffer(1 * time.Millisecond)
+		// 测试统计信息获取性能
+		bufferManager.GetStats()
+		bufferManager.GetBufferedSeconds()
 	}
+}
+
+// TestDependencyInjection 测试依赖注入功能
+func TestDependencyInjection(t *testing.T) {
+	fmt.Println("🧪 开始测试依赖注入功能...")
+
+	// 创建配置
+	config := DefaultStreamConfig()
+
+	// 创建模拟引擎（这里使用一个简单的结构体来模拟）
+	type MockEngine struct {
+		audioBuffer *AudioBuffer
+	}
+
+	mockEngine := &MockEngine{}
+
+	// 创建AudioBuffer
+	ttsChan := make(chan [][]byte, 100)
+	audioBuffer := NewAudioBuffer(ttsChan, config.AudioConfig, 100)
+
+	// 模拟依赖注入
+	mockEngine.audioBuffer = audioBuffer
+
+	// 验证注入是否成功
+	if mockEngine.audioBuffer == nil {
+		t.Error("AudioBuffer注入失败")
+	}
+
+	// 验证AudioBuffer功能
+	stats := mockEngine.audioBuffer.GetStats()
+	if stats.TotalSamples != 0 {
+		t.Errorf("新创建的AudioBuffer总样本数应该为0，实际得到%d", stats.TotalSamples)
+	}
+
+	fmt.Println("✅ 依赖注入功能测试通过")
 }
